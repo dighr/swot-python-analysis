@@ -1,10 +1,26 @@
-# swot-webapp
-Repo for the Safe Water Optimization Tool Web Application 
+[![Build Status](https://dev.azure.com/swot-dighr/SWOT/_apis/build/status/dighr.swot-python-analysis?branchName=master)](https://dev.azure.com/swot-dighr/SWOT/_build/latest?definitionId=2&branchName=master)
+
+# swot-python-analysis
+Safe Water Optimization Tool ANN Model
 
 The implementation of the network is encapsulated in a single class called
 NNetwork. This class has all the necessary methods to create a neural network
 and interact with it for training on a given data-set and making predictions 
 on user inputs.
+
+#### Version History
+
+v1.1 - Initial version
+
+v1.2 (May 06, 2020) - Updates include:
+  1. Modifying NNetwork to accept time either as a number (as formatted in Excel) or the standard Kobo output
+  2. Modified the 'run_swot_script' to retrain on the new dataset as a temporary measure until a model retraining protocol is established
+  
+v1.3 (May 20, 2020) - Updates include:
+  1. Modified the data division to split dataset used for training the model into training, validation, and testing (previous versions only split into training and validation). Training results graphs have been updated to reflect this split.
+  2. Changed from using a fixed number of epochs for training to using an early stopping procedure based on validation MSE with a patience of 10 epochs. To ensure this works, training results are no longer saved to the self.history and instead the history is reset for each model in the ensemble.
+  3. Forcing the model to randomize the weights and biases of each ANN in the ensemble to properly represent a multi-start ensemble.
+
 
 #### Training Workflow
 
@@ -52,16 +68,17 @@ where:
 i.e. `python run_swot_script SWOTAllData.csv untitled_network results.csv`
 `
 
-#### Libraries
+### Requirements
 
 Install the following libraries for the Network to work:
-1. keras
-2. Tensorflow
-3. numpy
-4. matplotlib
-5. pandas
-6. sklearn
+(Or run pip install -r requirements.txt)
+1. keras - a more user-friendly library for building neural networks
+2. Tensorflow - Tensorflow is the ML library
+3. numpy - adds necessary math functions
+4. matplotlib - for figure production
+5. pandas - for data structure management
+6. sklearn - data science library, contains MinMaxScaler for scaling inputs and outputs, as well as several built in performance metrics
 7. Pillow
-8. xlrd
-9. Yattag
+8. xlrd - for reading excel libraries
+9. Yattag - for HTML reporting
 
