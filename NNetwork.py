@@ -17,7 +17,6 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error
-from pandas import ExcelWriter
 
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -46,6 +45,9 @@ class NNetwork:
         self.history = None
         self.file = None
 
+        self.skipped_rows = []
+        self.ruleset = []
+
         self.layer1_neurons = 5
         self.epochs =1000
 
@@ -73,124 +75,6 @@ class NNetwork:
         self.model.add(keras.layers.Dense(1, activation="linear"))
         self.model.compile(loss='mse', optimizer=self.optimizer, metrics=['mse'])
 
-    def import_data_from_excel(self, filename, sheet=0):
-        """
-        Imports data to the network by an excel file.
-
-        Load data to a netwokr that are stored in a Microsoft Excel file format.
-        The data loaded from this method can be used both for training reasons as
-        well as to make predictions.
-
-        :param filename: String containing the filename of the excel file containing the input data (e.g "input_data.xlsx")
-        :param sheet: The number of the sheet in the .xlsx file that the data are stored in.
-        """
-
-        df = pd.read_excel(filename, sheet_name=sheet)
-
-        # Uncomment the following line to filter out samples that are in shade
-        # Change 1 to 0 to filter out samples that are exposed to sunlight
-        # df = df.drop(df[df['sb_sunshade'] == 1].index)
-
-        # Uncomment the next line to filter samples with input frc > 2 mg/L
-        # df = df.drop(df[df["se1_frc"] > 2].index)
-
-        self.file = df
-
-        global FRC_IN
-        global FRC_OUT
-        global WATTEMP
-        global COND
-
-        # Locate the fields used as inputs/predictors and outputs in the loaded file
-        # and split them
-
-        if 'se1_frc' in self.file.columns:
-            FRC_IN = 'se1_frc'
-            WATTEMP = 'se1_wattemp'
-            COND = 'se1_cond'
-            FRC_OUT = "se4_frc"
-        elif 'ts_frc1' in self.file.columns:
-            FRC_IN = 'ts_frc1'
-            WATTEMP = 'ts_wattemp'
-            COND = 'ts_cond'
-            FRC_OUT = "hh_frc1"
-        elif 'ts_frc' in self.file.columns:
-            FRC_IN = 'ts_frc'
-            WATTEMP = 'ts_wattemp'
-            COND = 'ts_cond'
-            FRC_OUT = "hh_frc"
-
-        self.file.dropna(subset=[FRC_IN], how='all', inplace=True)
-        self.file.dropna(subset=[FRC_OUT], how='all', inplace=True)
-        self.file.dropna(subset=['ts_datetime'], how='all', inplace=True)
-        self.file.dropna(subset=['hh_datetime'], how='all', inplace=True)
-        self.file.reset_index(drop=True, inplace=True)  # fix dropped indices in pandas
-
-        self.median_wattemp = np.median(self.file[WATTEMP].dropna().to_numpy())
-        self.median_cond = np.median(self.file[COND].dropna().to_numpy())
-
-        start_date = self.file["ts_datetime"]
-        end_date = self.file["hh_datetime"]
-
-        durations = []
-        if start_date.dtype == 'float64':  # Excel type
-            for i in range(len(start_date)):
-                start = xldate_as_datetime(start_date[i], datemode=0)
-                end = xldate_as_datetime(end_date[i], datemode=0)
-                durations.append(end - start)
-
-        else:  # kobo type
-            for i in range(len(start_date)):
-                temp_sta = start_date[i][:16]
-                temp_end = end_date[i][:16]
-                start = datetime.datetime.strptime(temp_sta, "%Y-%m-%dT%H:%M")
-                end = datetime.datetime.strptime(temp_end, "%Y-%m-%dT%H:%M")
-                durations.append(end - start)
-
-        sumdeltas = timedelta(seconds=0)
-        i = 1
-        while i < len(durations):
-            sumdeltas += abs(durations[i] - durations[i - 1])
-            i = i + 1
-
-        self.avg_time_elapsed = sumdeltas / (len(durations) - 1)
-
-        # Extract the column of dates for all data and put them in YYYY-MM-DD format
-        all_dates = []
-        for row in self.file.index:
-            all_dates.append(str(self.file.loc[row, 'ts_datetime'])[0:10])
-        self.file['formatted_date'] = all_dates
-
-        # Locate the rows of the missing data
-        nan_rows_watt = self.file.loc[self.file[WATTEMP].isnull()]
-        nan_rows_cond = self.file.loc[self.file[COND].isnull()]
-
-        # For every row of the missing data find the rows on the same day
-        for i in nan_rows_watt.index:
-            today = self.file.loc[i, 'formatted_date']
-            same_days = self.file[self.file['formatted_date'] == today]
-            temps = same_days[WATTEMP].dropna().to_numpy()
-        avg_daily_temp = np.mean(temps)
-
-        for i in nan_rows_cond.index:
-            today = self.file.loc[i, 'formatted_date']
-            same_days = self.file[self.file['formatted_date'] == today]
-            conds = same_days[COND].dropna().to_numpy()
-        avg_daily_cond = np.mean(conds)
-
-        self.file[WATTEMP] = self.file[WATTEMP].fillna(value=avg_daily_temp)
-        self.file[COND] = self.file[COND].fillna(value=avg_daily_cond)
-
-        # From these rows get the temperatures and avg them
-
-        # self.file.dropna(subset=[WATTEMP], how='all', inplace=True)
-        self.file.dropna(subset=[FRC_OUT], how='all', inplace=True)
-        self.predictors = self.file.loc[:, [FRC_IN, WATTEMP, COND]]
-        self.datainputs = self.predictors
-        self.targets = self.file.loc[:, FRC_OUT].values.reshape(-1, 1)
-
-        self.input_filename = filename
-
     def import_data_from_csv(self, filename):
         """
                 Imports data to the network by a comma-separated values (CSV) file.
@@ -199,11 +83,11 @@ class NNetwork:
                 The data loaded from this method can be used both for training reasons as
                 well as to make predictions.
 
-                :param filename: String containing the filename of the .csv file containing the input data (e.g "input_data.xlsx")
+                :param filename: String containing the filename of the .csv file containing the input data (e.g "input_data.csv")
         """
 
         df = pd.read_csv(filename)
-        self.file = df
+        self.file = df.copy()
 
         global FRC_IN
         global FRC_OUT
@@ -229,10 +113,15 @@ class NNetwork:
             COND = 'ts_cond'
             FRC_OUT = "hh_frc"
 
-        self.file.dropna(subset=[FRC_IN], how='all', inplace=True)
-        self.file.dropna(subset=[FRC_OUT], how='all', inplace=True)
-        self.file.dropna(subset=['ts_datetime'], how='all', inplace=True)
-        self.file.dropna(subset=['hh_datetime'], how='all', inplace=True)
+        # Standardize the DataFrame by specifying rules
+        # To add a new rule, call the method execute_rule with the parameters (description, affected_column, query)
+        self.execute_rule('Invalid tapstand FRC', FRC_IN, self.file[FRC_IN].isnull())
+        self.execute_rule('Invalid household FRC', FRC_OUT, self.file[FRC_OUT].isnull())
+        self.execute_rule('Invalid tapstand date/time', 'ts_datetime', self.file['ts_datetime'].isnull())
+        self.execute_rule('Invalid household date/time', 'hh_datetime', self.file['hh_datetime'].isnull())
+
+        self.skipped_rows = df.loc[df.index.difference(self.file.index)]
+
         self.file.reset_index(drop=True, inplace=True)  # fix dropped indices in pandas
         self.median_wattemp = np.median(self.file[WATTEMP].dropna().to_numpy())
         self.median_cond = np.median(self.file[COND].dropna().to_numpy())
@@ -241,7 +130,8 @@ class NNetwork:
         end_date = self.file["hh_datetime"]
 
         durations = []
-        dateformat = "%Y-%m-%dT%H:%M"
+        xl_dateformat = r"%Y-%m-%dT%H:%M"
+        all_dates = []
 
         for i in range(len(start_date)):
             try:
@@ -255,10 +145,12 @@ class NNetwork:
                 # excel type
                 start = start_date[i][:16]
                 end = end_date[i][:16]
-                start = datetime.datetime.strptime(start, dateformat)
-                end = datetime.datetime.strptime(end, dateformat)
+                start = datetime.datetime.strptime(start, xl_dateformat)
+                end = datetime.datetime.strptime(end, xl_dateformat)
 
             durations.append(end-start)
+            all_dates.append(datetime.datetime.strftime(start, r"%Y-%m-%d"))
+
 
         sumdeltas = timedelta(seconds=0)
 
@@ -268,41 +160,38 @@ class NNetwork:
         self.avg_time_elapsed = sumdeltas / (len(durations) - 1)
 
         # Extract the column of dates for all data and put them in YYYY-MM-DD format
-        all_dates = []
-        for row in self.file.index:
-            all_dates.append(str(self.file.loc[row, 'ts_datetime'])[0:10])
         self.file['formatted_date'] = all_dates
 
         # Locate the rows of the missing data
         nan_rows_watt = self.file.loc[self.file[WATTEMP].isnull()]
         nan_rows_cond = self.file.loc[self.file[COND].isnull()]
 
-        temps = []
         # For every row of the missing data find the rows on the same day
         for i in nan_rows_watt.index:
             today = self.file.loc[i, 'formatted_date']
             same_days = self.file[self.file['formatted_date'] == today]
             temps = same_days[WATTEMP].dropna().to_numpy()
-        avg_daily_temp = np.mean(temps)
-        conds = []
+            if len(temps):
+                avg_daily_temp = np.mean(temps)
+                self.file.loc[i, WATTEMP] = avg_daily_temp
         for i in nan_rows_cond.index:
             today = self.file.loc[i, 'formatted_date']
             same_days = self.file[self.file['formatted_date'] == today]
             conds = same_days[COND].dropna().to_numpy()
-        avg_daily_cond = np.mean(conds)
+            if len(conds):
+                avg_daily_cond = np.mean(conds)
+                self.file.loc[i, COND] = avg_daily_cond
 
-        self.file[WATTEMP] = self.file[WATTEMP].fillna(value=avg_daily_temp)
-        self.file[COND] = self.file[COND].fillna(value=avg_daily_cond)
-
-        # From these rows get the temperatures and avg them
-
-        # self.file.dropna(subset=[WATTEMP], how='all', inplace=True)
+        # For rows with missing data with no other rows sharing the same day, fill them with the average data in the set
+        self.file[WATTEMP].fillna(self.file[WATTEMP].dropna().mean(), inplace=True)
+        self.file[COND].fillna(self.file[COND].dropna().mean(), inplace=True)
 
         self.predictors = self.file.loc[:, [FRC_IN, WATTEMP, COND]]
         self.datainputs = self.predictors
         self.targets = self.file.loc[:, FRC_OUT].values.reshape(-1, 1)
 
         self.input_filename = filename
+
     def train_SWOT_network(self, directory):
         """Train the set of 100 neural networks on SWOT data
 
@@ -356,7 +245,7 @@ class NNetwork:
         Trains a single Neural Network on imported data.
 
         This method trains Neural Network on data that have previously been imported
-        to the network using the import_data_from_csv() or import_data_from_excel() methods.
+        to the network using the import_data_from_csv() method.
         The network used is a Multilayer Perceptron (MLP). Input and Output data are
         normalized using MinMax Normalization.
 
@@ -442,7 +331,7 @@ class NNetwork:
         """
         Make predictions on loaded data.
 
-        This method makes predictions on data loaded to the network by the import_data_from_excel/csv() methods.
+        This method makes predictions on data loaded to the network by the import_data_from_csv() methods.
         To make the predictions, a pretrained model must be loaded using the import_pretrained_model() method.
         The SWOT ANN uses an ensemble of 100 ANNs. All of the 100 ANNs make a prediction on the inputs and the results are
         stored. The median of all the 100 predictions is calculated and stored here.
@@ -515,11 +404,6 @@ class NNetwork:
 
         print(self.results)
         return self.results
-
-    def export_results_to_excel(self, filename):
-        writer = ExcelWriter(filename)
-        self.results.to_excel(writer, 'Sheet1', index=False)
-        writer.save()
 
     def export_results_to_csv(self, filename):
         self.results.to_csv(filename, index=False)
@@ -610,8 +494,8 @@ class NNetwork:
 
         df = self.results
 
-        # Uncomment the following line to load the results direclty from an excel file
-        # df = pd.read_excel('results.xlsx')
+        # Uncomment the following line to load the results direclty from an csv file
+        # df = pd.read_csv('results.csv')
 
         # Filter out outlier values
         df = df.drop(df[df[FRC_IN] > 2.8].index)
@@ -823,6 +707,8 @@ class NNetwork:
         # scatterplots_b64 = self.generate_2d_scatterplot().decode('UTF-8')
         html_table = self.prepare_table_for_html_report()
 
+        skipped_rows_table = self.skipped_rows_html()
+
         doc, tag, text, line = Doc().ttl()
         with tag('h1', klass='title'):
             text('SWOT ARTIFICIAL NEURAL NETWORK REPORT')
@@ -847,6 +733,18 @@ class NNetwork:
 
         doc.asis(html_table)
 
+        doc.asis(skipped_rows_table)
+
+        totalmatches = 0
+        if len(self.ruleset):
+            with tag('ul', id='ann_ruleset'):
+                for rule in self.ruleset:
+                    totalmatches += rule[2]
+                    line('li', '%s. Matches: %d' % (rule[0], rule[2]))
+
+        with tag('div', id='pythonSkipped_count'):
+            text(totalmatches)
+
         file = open(filename, 'w+')
         file.write(doc.getvalue())
         file.close()
@@ -855,8 +753,6 @@ class NNetwork:
 
     def prepare_table_for_html_report(self):
         """Formats the results into an html table for display."""
-
-        temp = self.results
 
         table_df = pd.DataFrame()
         table_df['Input FRC (mg/L)'] = self.results[FRC_IN]
@@ -870,9 +766,43 @@ class NNetwork:
 
         str_io = io.StringIO()
 
-        html = table_df.to_html(buf=str_io, classes='tabular_results')
+        table_df.to_html(buf=str_io, table_id='annTable')
         html_str = str_io.getvalue()
         return html_str
+
+    def skipped_rows_html(self):
+        if self.skipped_rows.empty:
+            return ""
+
+        printable_columns = ['ts_datetime', FRC_IN, 'hh_datetime', FRC_OUT, WATTEMP, COND]
+        required_columns = [rule[1] for rule in self.ruleset]
+
+        doc, tag, text = Doc().tagtext()
+
+        with tag('table', klass="table center fill-whitespace", id='pythonSkipped', border='1'):
+            with tag('thead'):
+                with tag('tr'):
+                    for col in printable_columns:
+                        with tag('th'): text(col)
+            with tag('tbody'):
+                for (_, row) in self.skipped_rows[printable_columns].iterrows():
+                    with tag('tr'):
+                        for col in printable_columns:
+                            with tag('td'):
+                                # check if required value in cell is nan
+                                if col in required_columns and (not row[col] or row[col] != row[col]):
+                                    with tag('div', klass='red-cell'):
+                                        text('')
+                                else:
+                                    text(row[col])
+
+        return doc.getvalue()
+
+    def execute_rule(self, description, column, matches):
+        rule = (description, column, sum(matches))
+        self.ruleset.append(rule)
+        if sum(matches):
+            self.file.drop(self.file.loc[matches].index, inplace=True)
 
     '''def save_2d_scatterplot_svg(self):
 
